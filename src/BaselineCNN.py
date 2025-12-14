@@ -37,10 +37,10 @@ print("Using device:", device)
 #%%
 # Base directory you gave me
 
-train_images_csv = f'.{os.sep}FilteredImages_animalsProject/train-images-with-labels-with-rotation_animalsProject.csv'
-train_ann_csv    = f'.{os.sep}FilteredImages_animalsProject/train-annotations-human-imagelabels_animalsProject.csv'
-test_images_csv  = f'.{os.sep}FilteredImages_animalsProject/test-images-with-rotation_animalsProject.csv'
-test_ann_csv     = f'.{os.sep}FilteredImages_animalsProject/test-annotations-human-imagelabels_animalsProject.csv'
+train_images_csv = f'.{os.sep}BigData/train_images.csv'
+train_ann_csv    = f'.{os.sep}BigData/train_annotations.csv'
+test_images_csv  = f'.{os.sep}BigData/test_images.csv'
+test_ann_csv     = f'.{os.sep}BigData/test_annotations.csv'
 
 train_labels = pd.read_csv(train_images_csv)   # ImageID + rotation + etc.
 classes      = pd.read_csv(train_ann_csv)      # ImageID + LabelName + Confidence (for filtered animals)
@@ -48,16 +48,12 @@ classes      = pd.read_csv(train_ann_csv)      # ImageID + LabelName + Confidenc
 # Your manual mapping MID -> animal name
 label_to_animal = {
     "/m/0bt9lr": "Dog",
-    "/m/01dws":  "Bear",
-    "/m/03k3r":  "Horse",
     "/m/015p6":  "Bird",
+    "/m/03k3r":  "Horse",
     "/m/01yrx":  "Cat",
-    "/m/09ld4":  "Frog",
-    "/m/0ch_cf": "Fish",
-    "/m/078jl":  "Snake",
+    "/m/01dws":  "Bear",
     "/m/07bgp":  "Sheep",
-    "/m/07pbfj": "Fish",
-    "/m/08hhz2": "Sheep"
+    "/m/01xq0k1": "Cattle"
 }
 
 # Keep only labels we know how to map
@@ -90,33 +86,8 @@ print("\nTest labels merged shape:", test_labels_merged.shape)
 print(test_labels_merged.head())
 
 #%% [markdown]
-# Since the train consists of 510,009 images and the test contains 15,093 images,
-# we will be using 100 randomly selected images from each of the 9 classes for the training 
-# (i.e. about 900 images total for training). A limitation with this however is it has the 
-# possibility of lowering the accuracy since the model is being trained with less data than 
-# the original 510,009 images. 
-#
-# Then we will be using 20% of the test images (i.e. 20 images for each class and 180 
-# test images total). 
-#
-# In total, there are 1,080 images used in the model. 
-
-train_labels_merged = (
-    train_labels_merged.groupby("ClassName", group_keys=False)
-      .apply(lambda x: x.sample(n=min(len(x), 100), random_state=42))
-      .reset_index(drop=True)
-)
-
-
-test_labels_merged = (
-    test_labels_merged.groupby("ClassName", group_keys=False)
-      .apply(lambda x: x.sample(n=min(len(x), 20), random_state=42))
-      .reset_index(drop=True)
-)
-
-#%% [markdown]
 # ------------------------------------------------------------
-# 2. Paths & label mapping (10 animal classes)
+# 2. Paths & label mapping (7 animal classes)
 # ------------------------------------------------------------
 #As Neural networks cannot work directly with string labels, we convert our animal classes into integer indices. 
 #We first collect the set of distinct animal names that appear in `label_to_animal`, sort them, and assign each one a class index via the dictionary `class_to_idx` (e.g. `"Bear" -> 0`, `"Bird" -> 1`, etc.). 
