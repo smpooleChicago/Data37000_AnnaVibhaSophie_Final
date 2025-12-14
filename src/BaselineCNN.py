@@ -34,14 +34,13 @@ print("Using device:", device)
 # (1) the image identifier and its metadata, 
 # and (2) the associated label ID and animal class name. 
 
-
+#%%
 # Base directory you gave me
-base_dir = "/Users/annasirtori/localDocs/GitHub/Data37000_AnnaVibhaSophie_Final/src/FilteredImages_animalsProject"
 
-train_images_csv = os.path.join(base_dir, "train-images-with-labels-with-rotation_animalsProject.csv")
-train_ann_csv    = os.path.join(base_dir, "train-annotations-human-imagelabels_animalsProject.csv")
-test_images_csv  = os.path.join(base_dir, "test-images-with-rotation_animalsProject.csv")
-test_ann_csv     = os.path.join(base_dir, "test-annotations-human-imagelabels_animalsProject.csv")
+train_images_csv = f'.{os.sep}FilteredImages_animalsProject/train-images-with-labels-with-rotation_animalsProject.csv'
+train_ann_csv    = f'.{os.sep}FilteredImages_animalsProject/train-annotations-human-imagelabels_animalsProject.csv'
+test_images_csv  = f'.{os.sep}FilteredImages_animalsProject/test-images-with-rotation_animalsProject.csv'
+test_ann_csv     = f'.{os.sep}FilteredImages_animalsProject/test-annotations-human-imagelabels_animalsProject.csv'
 
 train_labels = pd.read_csv(train_images_csv)   # ImageID + rotation + etc.
 classes      = pd.read_csv(train_ann_csv)      # ImageID + LabelName + Confidence (for filtered animals)
@@ -97,11 +96,12 @@ print(test_labels_merged.head())
 #As Neural networks cannot work directly with string labels, we convert our animal classes into integer indices. 
 #We first collect the set of distinct animal names that appear in `label_to_animal`, sort them, and assign each one a class index via the dictionary `class_to_idx` (e.g. `"Bear" -> 0`, `"Bird" -> 1`, etc.). 
 #The list `idx_to_name` stores the reverse mapping from index back to class name, which is useful for decoding predictions.
-
-We then build a `mid_to_idx` dictionary that maps each Open Images label ID (MID) directly to its integer class index, by composing `label_to_animal` with `class_to_idx`. During dataset loading we will use `mid_to_idx` to convert the `LabelName` column (MIDs from the CSVs) into numerical labels suitable for `CrossEntropyLoss`. This ensures a consistent encoding of classes throughout training and evaluation.
+#
+#We then build a `mid_to_idx` dictionary that maps each Open Images label ID (MID) directly to its integer class index, by composing `label_to_animal` with `class_to_idx`. During dataset loading we will use `mid_to_idx` to convert the `LabelName` column (MIDs from the CSVs) into numerical labels suitable for `CrossEntropyLoss`. This ensures a consistent encoding of classes throughout training and evaluation.
 
 # and prepare mappings for later use.
 
+#%%
 # Unique animal names (from your mapping)
 animal_names = sorted(set(label_to_animal.values()))
 class_to_idx = {name: i for i, name in enumerate(animal_names)}
@@ -142,8 +142,8 @@ for mid, idx in mid_to_idx.items():
 # The dataset therefore returns pairs `(image_tensor, label_idx)`, where `image_tensor` has shape `[3, 64, 64]` and `label_idx` is an integer in `[0, num_classes)`. 
 # Finally, we wrap the datasets in `DataLoader`s that handle batching, shuffling (for the training set), and parallel loading, producing mini-batches ready to be fed into the CNN.
 
-TRAIN_IMG_DIR = os.path.join(base_dir, "train_images")
-TEST_IMG_DIR  = os.path.join(base_dir, "test_images")
+TRAIN_IMG_DIR =  f'.{os.sep}train_images'
+TEST_IMG_DIR  = f'.{os.sep}test_images'
 #TRAIN_IMG_DIR = "/Users/annasirtori/.../FilteredImages_animalsProject/train_images"
 #TEST_IMG_DIR  = "/Users/annasirtori/.../FilteredImages_animalsProject/test_images"
 
