@@ -4,13 +4,13 @@ Analyzing the OpenImages dataset for the classification of 9 animal classes: Dog
 
 Everyone contributed to the Statement and Summary documents.
 
-1. Statement: read Statement.docx
+1. Statement: read ProblemStatement.docx
 
-2. EDA: run EDA.py or EDA.ipynb
+2. EDA: run EDA.py or EDA.ipynb (preferred because it has additional commentary not present in the .py file)
 
 3 and 4. Baseline and enhanced models and their respective evaluation:
 
-    * Baseline Model: run xxxx
+    * Baseline Model: run BaselineCNN.py
 
     * Enhanced Model: run xxx
 
