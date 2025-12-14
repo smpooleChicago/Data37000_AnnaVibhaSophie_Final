@@ -11,9 +11,9 @@ from tqdm import tqdm
 #%% [markdown]
 ## Data Preparation
 #%%
-filepath_tl = f'.{os.sep}FilteredImages_animalsProject/train-images-with-labels-with-rotation_animalsProject.csv'
+filepath_tl = f'.{os.sep}BigData/train-images-with-labels-with-rotation_animalsProject.csv'
 train_labels = pd.read_csv(filepath_tl)
-filepath_c = f'.{os.sep}FilteredImages_animalsProject/train-annotations-human-imagelabels_animalsProject.csv'
+filepath_c = f'.{os.sep}BigData/train-annotations-human-imagelabels_animalsProject.csv'
 classes = pd.read_csv(filepath_c)
 
 #%%
