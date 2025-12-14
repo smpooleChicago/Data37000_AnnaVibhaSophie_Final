@@ -77,3 +77,14 @@ filtered_ID = filtered["ImageID"].tolist()
 train_images_filtered = train_images[train_images["ImageID"].isin(filtered_train_annotations["ImageID"].tolist())]
 #train_images_filtered.to_csv("train-images-with-labels-with-rotation_animalsProject.csv", index=False)
 # %%
+#From filtered MID, filters validation annotations
+validation_annotations = pd.read_csv("validation-annotations-human-imagelabels.csv")
+filtered_validation_annotations = validation_annotations[validation_annotations["LabelName"].isin(target_MID)]
+#filtered_validation_annotations.to_csv("validation-annotations-human-imagelabels_animalsProject.csv", index=False)
+
+#From the filtered validation annotations, filters validation images
+validation_images = pd.read_csv("validation-images-with-rotation.csv")
+filtered_ID = filtered["ImageID"].tolist()
+validation_images_filtered = validation_images[validation_images["ImageID"].isin(filtered_validation_annotations["ImageID"].tolist())]
+#validation_images_filtered.to_csv("validation-images-with-rotation_animalsProject.csv", index=False)
+# %%
