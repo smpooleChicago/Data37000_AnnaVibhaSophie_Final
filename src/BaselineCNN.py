@@ -90,6 +90,31 @@ print("\nTest labels merged shape:", test_labels_merged.shape)
 print(test_labels_merged.head())
 
 #%% [markdown]
+# Since the train consists of 510,009 images and the test contains 15,093 images,
+# we will be using 100 randomly selected images from each of the 9 classes for the training 
+# (i.e. about 900 images total for training). A limitation with this however is it has the 
+# possibility of lowering the accuracy since the model is being trained with less data than 
+# the original 510,009 images. 
+#
+# Then we will be using 20% of the test images (i.e. 20 images for each class and 180 
+# test images total). 
+#
+# In total, there are 1,080 images used in the model. 
+
+train_labels_merged = (
+    train_labels_merged.groupby("ClassName", group_keys=False)
+      .apply(lambda x: x.sample(n=min(len(x), 100), random_state=42))
+      .reset_index(drop=True)
+)
+
+
+test_labels_merged = (
+    test_labels_merged.groupby("ClassName", group_keys=False)
+      .apply(lambda x: x.sample(n=min(len(x), 20), random_state=42))
+      .reset_index(drop=True)
+)
+
+#%% [markdown]
 # ------------------------------------------------------------
 # 2. Paths & label mapping (10 animal classes)
 # ------------------------------------------------------------
