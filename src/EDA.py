@@ -191,10 +191,54 @@ for cls in classes_list:
 plt.tight_layout()
 plt.show()
 
-# %%
+# %% [markdown]
+# Looking at randomly sampled images from each class reveals lots of variability in image quality, 
+# composition, and context. Animals appear at different scales and orientations, ranging from 
+# close-up images like the second cat to distant or partially occluded subjects like the second 
+# horse. Backgrounds vary, including natural environments such as forests and water, as well as 
+# manmade settings like the second dog.
+#
+# The image quality is also inconsistent, with noticeable differences in resolution, lighting, and 
+# sharpness. Some images are well centered and clearly depict the target animal like the second cat, 
+# while others contain significant background clutter, are blurry, or include the animal as a small 
+# portion of the frame. In several cases, the animal is difficult to identify, such as the first snake 
+# image. I’m not entirely sure where the snake is present. Some labels appear incorrect, such as the 
+# first “sheep” that is a bald eagle, and the first fish. I doubt there’s a fish in that image. 
+#
+# These observations depict the challenges of classifying real images and highlight the need for 
+# quality feature learning and preprocessing during the modeling process. 
 
 # %%
+sizes = []
+
+tqdm.pandas(desc="Loading images for size stats")
+
+for url in tqdm(final_df_usable['OriginalURL'], total=len(final_df_usable)):
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        img = Image.open(BytesIO(response.content))
+        sizes.append(img.size)  # (width, height)
+    except:
+        continue
 
 # %%
-
+sizes_df = pd.DataFrame(sizes, columns=["width", "height"])
+sizes_df['area'] = sizes_df['width'] * sizes_df['height']
+pd.options.display.float_format = '{:,.0f}'.format  # no decimals, commas for thousands
+sizes_df.describe()
+# %%
+sizes_df.hist(bins=30, figsize=(12,6))
+plt.suptitle("Distribution of Image Widths, Heights and Areas")
+plt.show()
+# %% [markdown]
+# The images in the dataset vary widely in size. The width ranges from 300 to 6,048 pixels, with a mean 
+# of about 2,252 pixels, while the height ranges from 150 to 6,016 pixels, with a mean of about 1,808 
+# pixels. The area of the images also varies from roughly 68,000 to over 26 million pixels, with a median 
+# around 3.1 million pixels. Most images fall in the middle range of about 1,000–3,000 pixels in width 
+# and 800–2,600 pixels in height, but there are extremely small and large images. This variability suggests 
+# that while the dataset contains mostly reasonably sized images, there are some low-resolution images that 
+# might be challenging for modeling, and high-resolution images that would require resizing for 
+# computational efficiency. While this variability is useful to understand, images will need to be resized 
+# to the same dimensions before modeling so the neural network can properly process them. 
 # %%
