@@ -44,7 +44,6 @@ test_ann_csv     = f'.{os.sep}BigData/test_annotations.csv'
 
 train_labels = pd.read_csv(train_images_csv)   # ImageID + rotation + etc.
 classes      = pd.read_csv(train_ann_csv)      # ImageID + LabelName + Confidence (for filtered animals)
-["Dog", "Bird", "Horse", "Cat", "Bear","Sheep", "Cattle"]
 
 # Your manual mapping MID -> animal name
 label_to_animal = {
