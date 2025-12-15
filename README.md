@@ -1,6 +1,6 @@
 Sophie Poole, Anna Sirtori, Vibha Velmurugan
 
-Analyzing the OpenImages dataset for the classification of 9 animal classes: Dog, Bird, Horse, Cat, Fish, Frog, Bear, Snake, Sheep.
+Analyzing the OpenImages dataset for the classification of 7 animal classes: Dog, Bird, Horse, Cat, Bear, Sheep, and Cattle.
 
 Everyone contributed to the Statement and Summary documents.
 
@@ -12,6 +12,6 @@ Everyone contributed to the Statement and Summary documents.
 
     * Baseline Model: run BaselineCNN.py
 
-    * Enhanced Model: run xxx
+    * Enhanced Model: run TransferLearning.py
 
 5. Compare results and reflection: read Summary.py
