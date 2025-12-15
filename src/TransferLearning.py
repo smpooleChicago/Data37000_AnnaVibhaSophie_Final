@@ -115,7 +115,6 @@ data_transforms = {
     ]),
 }
 
-
 def load_image_from_url(url):
     try:
         response = requests.get(url, stream=True, timeout=5)
@@ -123,7 +122,7 @@ def load_image_from_url(url):
         img = Image.open(BytesIO(response.content)).convert("RGB")
         return img
     except Exception as e:
-        #print(f"Skipping URL {url}: {e}")
+        print(f"Skipping URL {url}: {e}")
         return None
 
 
@@ -136,28 +135,33 @@ class OpenImagesDataset(Dataset):
         return len(self.df)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
+        start_idx = idx
+        while True:
+            row = self.df.iloc[idx]
+            img = load_image_from_url(row["OriginalURL"])
+            if img is not None:
+                if self.transform:
+                    img = self.transform(img)
+                return img, row["label"]
 
-        url = row["OriginalURL"]
-        label = row["label"]
+            idx = (idx + 1) % len(self.df)
+            if idx == start_idx:
+                return None
+    
+from sklearn.model_selection import train_test_split
 
-        img = load_image_from_url(row["OriginalURL"])
-        if img is None:
-            # If image failed, return a random valid sample
-            return self.__getitem__((idx + 1) % len(self.df))
+train_df, test_df = train_test_split(
+    train_labels_merged,
+    test_size=0.2,             # 20% test, 80% train
+    stratify=train_labels_merged['label'],  # keep class proportions
+    random_state=42            # for reproducibility
+)
 
-        if self.transform:
-            img = self.transform(img)
-
-        return img, label
-
-train = OpenImagesDataset(train_labels_merged, data_transforms["train"])
-test   = OpenImagesDataset(test_labels_merged, data_transforms["val"])
-val  = OpenImagesDataset(validation_labels_merged, data_transforms["val"])
+train = OpenImagesDataset(train_df, data_transforms["train"])
+test   = OpenImagesDataset(test_df, data_transforms["val"])
 
 train_loader = DataLoader(train, batch_size=32, shuffle=True)
 test_loader  = DataLoader(test, batch_size=32, shuffle=False)
-val_loader   = DataLoader(val, batch_size=32, shuffle=False)
 
 #%%
 
@@ -223,6 +227,18 @@ train_model(model, train_loader, optimizer, criterion, device, epochs=3)
 test_model(model, test_loader, device)
 
 #%%
+# Unfreezing the last few layers (prevents overfitting)
+for name, param in list(model.named_parameters())[-10:]:
+    param.requires_grad = True
+
+optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
+train_model(model, train_loader, optimizer, criterion, device, epochs=2)
+# Epoch 1, 3.3 min, loss = 1.2081, training accuracy = 56.43%
+# Epoch 2, by 6 min, loss = 1.2081, training accuracy = 65.36%
+#%%
+test_model(model, test_loader, device)
+
+#%%
 sample, _ = next(iter(test_loader))
 x = sample[0].unsqueeze(0).to(device)
 with torch.no_grad():
@@ -236,6 +252,7 @@ plt.suptitle("First Conv Layer Feature Maps")
 plt.show()
 
 # %%
+# Accuracy; Confusion matrix; Per-class metrics; Train/validation curves
 #https://docs.pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
 #https://docs.pytorch.org/vision/main/models/generated/torchvision.models.resnet18.html
 
