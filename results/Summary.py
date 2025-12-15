@@ -8,11 +8,18 @@
 # We chose Transfer Learning specifically since uses pre-trained CNN's on images, such as from ImageNet, 
 # and has reduced training time since it only needs to fine-tune for the final layers of the neural network. 
 #
-# The baseline model is in the file BaselineCNN.py and the Transfer Learning model 
-# is in the file TransferLearning.py (both in the src file).
-#
 # ## Baseline Model
 # From the Baseline model, there were 4,261,927 total parameters. 
+#
+# From the training, 
+# * Epoch 1/5, loss = 2.1854, train acc = 13.33%, val acc = 14.56%
+# * Epoch 2/5, loss=2.0052, train Acc=16.05%, val acc=22.15%
+# * Epoch 3/5, loss=1.9327, train Acc=21.77%, val acc=24.68%
+# * Epoch 4/5, loss=1.8845, train acc=25.71%, val acc = 22.15%
+# * Epoch 5/5, loss=1.8524, train acc=26.94%, val acc = 24.05%
+#
+# The test model's accuracy was 27.39%. 
+# 
 #
 # ## Transfer Learning
 # 
@@ -32,9 +39,20 @@
 # 
 # The test accuracy this time was 52.23%, which is only 5% higher than the initial training. 
 #
-# The animal class with the highest precision and reclass is Bird (83% and 76% respectively).
-# A reason for this could be that "bird" includes many species of birds, while classes like 
-# "dog" or "cat" are only 1 species. The animal with the lowest precision is sheep (9%). 
+# # Comparison
+# Both models went through 5 epochs, with the training accuracies continuously increasing 
+# and the loss continuously decreasing. 
+# Both had the same pattern where at the 4th epoch, the validation accuracy decreased instead 
+# of increased. This suggests that this data had an unstable learning rate. 
+# Comparing the training accuracies and the test accuracies, the accuracies were significantly 
+# higher for the Transfer Learning model. This shows how the Transfer Learning *was* an improved 
+# model like we intended to make. 
+#
+# The classification report that bird had the highest precision (for both CNN and Transfer Learning),
+# and sheep had the lowest precision for both models. However, looking at the support numbers for the models,
+# the precision and recall are generally higher when there are more images for that class. This shows that
+# with more data, the model tends to be more accurate. 
+# 
 # 
 # # Discussion and Interpretation
 # The hardest roadblock we faced was the 429 error where 
