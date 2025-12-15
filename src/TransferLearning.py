@@ -17,6 +17,9 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from PIL import Image
 from io import BytesIO
+from sklearn.metrics import confusion_matrix
+
+
 
 #%% [markdown]
 # # Transfer Learning
@@ -36,10 +39,6 @@ device = torch.device(device)
 
 train_images_csv = f'.{os.sep}BigData/train_images.csv'
 train_ann_csv    = f'.{os.sep}BigData/train_annotations.csv'
-test_images_csv  = f'.{os.sep}BigData/test_images.csv'
-test_ann_csv     = f'.{os.sep}BigData/test_annotations.csv'
-val_images_csv  = f'.{os.sep}BigData/val_images.csv'
-val_annotations_csv     = f'.{os.sep}BigData/val_annotations.csv'
 
 train_labels = pd.read_csv(train_images_csv)   # ImageID + rotation + etc.
 classes      = pd.read_csv(train_ann_csv)      # ImageID + LabelName + Confidence (for filtered animals)
@@ -66,38 +65,12 @@ train_labels_merged = train_labels.merge(
     how="inner"           # only keep images that have our animal label
 )
 
-# Same for test split
-test_images = pd.read_csv(test_images_csv)
-test_ann    = pd.read_csv(test_ann_csv)
-test_ann    = test_ann[test_ann["LabelName"].isin(label_to_animal.keys())].copy()
-test_ann["ClassName"] = test_ann["LabelName"].map(label_to_animal)
-
-test_labels_merged = test_images.merge(
-    test_ann[["ImageID", "LabelName", "ClassName"]],
-    on="ImageID",
-    how="inner"
-)
-
-#Merge validation as well
-validation_images = pd.read_csv(val_images_csv)
-validation_ann = pd.read_csv(val_annotations_csv)
-validation_ann    = validation_ann[validation_ann["LabelName"].isin(label_to_animal.keys())].copy()
-validation_ann["ClassName"] = validation_ann["LabelName"].map(label_to_animal)
-
-validation_labels_merged = validation_images.merge(
-    validation_ann[["ImageID", "LabelName", "ClassName"]],
-    on="ImageID",
-    how="inner"
-)
-
 # Map class names to numeric variables 
 classes = sorted(train_labels_merged["ClassName"].unique())
 class_to_idx = {cls: i for i, cls in enumerate(classes)}
 num_classes = len(classes)
 
 train_labels_merged["label"] = train_labels_merged["ClassName"].map(class_to_idx)
-test_labels_merged["label"]   = test_labels_merged["ClassName"].map(class_to_idx)
-validation_labels_merged["label"]  = validation_labels_merged["ClassName"].map(class_to_idx)
 
 #%%
 data_transforms = {
@@ -150,22 +123,35 @@ class OpenImagesDataset(Dataset):
     
 from sklearn.model_selection import train_test_split
 
-train_df, test_df = train_test_split(
+train_df, test_and_val = train_test_split(
     train_labels_merged,
-    test_size=0.2,             # 20% test, 80% train
-    stratify=train_labels_merged['label'],  # keep class proportions
-    random_state=42            # for reproducibility
+    test_size=0.3, # 70% train
+    stratify=train_labels_merged['label'], 
+    random_state=42 
+)
+
+test_df, val_df = train_test_split(
+    test_and_val,
+    test_size=0.5, #15% test, 15% validation
+    stratify=test_and_val['label'],
+    random_state=42
 )
 
 train = OpenImagesDataset(train_df, data_transforms["train"])
 test   = OpenImagesDataset(test_df, data_transforms["val"])
+val = OpenImagesDataset(val_df, data_transforms["val"])
 
 train_loader = DataLoader(train, batch_size=32, shuffle=True)
 test_loader  = DataLoader(test, batch_size=32, shuffle=False)
+val_loader = DataLoader(val, batch_size=32, shuffle=False)
 
 #%%
 
 def train_model(model, dataloader, optimizer, criterion, device, epochs=3):
+    train_loss = []
+    train_acc = []
+    val_loss = []
+    val_acc = []
     model.train()
     for epoch in range(epochs):
         running_loss, correct, total = 0.0, 0, 0
@@ -183,8 +169,26 @@ def train_model(model, dataloader, optimizer, criterion, device, epochs=3):
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
+        train_loss.append(running_loss / total)
+        train_acc.append(correct/total)
         acc = 100 * correct / total
+
+        model.eval()
+        val_running_loss, val_correct, val_total = 0.0, 0, 0
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+                val_running_loss += loss.item() * images.size(0)
+                _, preds = torch.max(outputs, 1)
+                val_correct += (preds == labels).sum().item()
+                val_total += labels.size(0)
+        val_loss.append(val_running_loss / val_total)
+        val_acc.append(val_correct / val_total )
         print(f"Epoch {epoch+1}/{epochs} | Loss: {running_loss/len(dataloader):.4f} | Train Acc: {acc:.2f}%")
+    return train_loss, train_acc, val_loss, val_acc
 
 def test_model(model, dataloader, device):
     model.eval()
@@ -215,28 +219,104 @@ model = model.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.fc.parameters(), lr=1e-3)
 
-# %%
+#%% [markdown]
 # Now we can train the models
+# 
+# * Epoch 1: loss = 1.8721, train accuracy = 24.9%
+# * Epoch 2: loss = 1.5139, train accuracy = 43.54%
+# * Epoch 3: loss = 1.3147, train accuracy = 54.01%
 
-train_model(model, train_loader, optimizer, criterion, device, epochs=3)
-#1st epoch was about 13 mins, loss 1.8037, train accuracy 29.24
-#2nd epoch done by 17 mins, loss 1.4242, train accuracy 49.52
-#3rd epoch at 21 min, loss 1.3022, train acc 53.52
+train_loss, train_acc, val_loss, val_acc = train_model(model, train_loader, optimizer, criterion, device, epochs=3)
+
 
 # %%
 test_model(model, test_loader, device)
 
-#%%
+#%% [markdown]
 # Unfreezing the last few layers (prevents overfitting)
+#
+# * Epoch 1: loss = 1.2317, training accuracy = 53.74%
+# * Epoch 2: loss = 1.0012, training accuracy = 65.31%
+
 for name, param in list(model.named_parameters())[-10:]:
     param.requires_grad = True
 
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-4)
-train_model(model, train_loader, optimizer, criterion, device, epochs=2)
-# Epoch 1, 3.3 min, loss = 1.2081, training accuracy = 56.43%
-# Epoch 2, by 6 min, loss = 1.2081, training accuracy = 65.36%
+train_loss_unfreeze, train_acc_unfreeze, val_loss_unfreeze, val_acc_unfreeze = train_model(model, train_loader, optimizer, criterion, device, epochs=2)
+
 #%%
 test_model(model, test_loader, device)
+
+#%% [markdown]
+# # Model Evaulation
+#
+# Rows represents the true labels and the columns are the predicted labels
+# 
+
+model.eval()
+
+y_true = []
+y_pred = []
+
+with torch.no_grad():  # no gradients needed during evaluation
+    for images, labels in test_loader:
+        images = images.to(device)  # move to GPU if available
+        labels = labels.to(device)
+
+        outputs = model(images)           # forward pass
+        _, preds = torch.max(outputs, 1)  # get predicted class index
+
+        y_true.extend(preds.cpu().numpy())
+        y_pred.extend(labels.cpu().numpy())
+
+cm = confusion_matrix(y_true, y_pred)
+print(cm)
+#%% [markdown]
+# ## Per-Class Metrics
+# The class with the highest precision is Bird and the class with the lowest precision is Sheep. 
+# The support shows that there were only 2 available images used for Sheep. This could be due to the 429 
+# error (too many requests from Open Images) or links being outdated. 
+#
+ClassNames = ["Dog", "Bird", "Horse", "Cat", "Bear", "Sheep", "Cattle"]
+from sklearn.metrics import classification_report
+classReport = classification_report(y_true, y_pred, target_names=ClassNames)
+print(classReport)
+#%% [markdown]
+# ## Training vs Validation Curve
+# 
+# The first plot shows the loss curve (i.e. Training Loss vs epochs and Validation Loss vs epochs) and
+# the second plot shows the accuracy urve (i.e. Training accuracy vs epoch and Validation accuracy vs epoch). 
+#
+# As the number of epochs increase, generally the loss decreases and accuracy increases. However we can see that 
+# Train loss curve is very low for all the epochs and at the end the validation loss curve goes upwards. 
+# This could be signs of overfitting. 
+#
+# The learning curves are generally going upwards (a good sign that the model is learning). 
+# However the loss curve suggests that the learning isn't stable. 
+
+import matplotlib.pyplot as plt
+epochs = range(1, 6)
+
+plt.figure(figsize=(10,4))
+plt.subplot(1,2,1)
+plt.plot(epochs, train_loss+train_loss_unfreeze, label='Train Loss')
+plt.plot(epochs, val_loss + val_loss_unfreeze, label='Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Loss Curve')
+plt.legend()
+
+# Accuracy curve
+plt.subplot(1,2,2)
+plt.plot(epochs, train_acc + train_acc_unfreeze, label='Train Acc')
+plt.plot(epochs, val_acc + val_acc_unfreeze, label='Validation Acc')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.title('Accuracy Curve')
+plt.legend()
+
+plt.show()
+
 
 #%%
 sample, _ = next(iter(test_loader))

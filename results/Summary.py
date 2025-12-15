@@ -17,21 +17,24 @@
 # ## Transfer Learning
 # 
 # From one of the times running the Transfer Learning Model,
-# * Epoch 1: loss = 1.8037, train accuracy = 29.24%
-# * Epoch 2: loss = 1.4242, train accuracy = 49.52%
-# * Epoch 3: loss = 1.3022, train accuracy = 53.52%
+# * Epoch 1: loss = 1.8721, train accuracy = 24.9%
+# * Epoch 2: loss = 1.5139, train accuracy = 43.54%
+# * Epoch 3: loss = 1.3147, train accuracy = 54.01%
 #
 # We can see from the trend that with each epoch, the loss decreased as the train accuracy increased. 
 # And this was the same trend when running other times. 
 #
-# The Test accuracy was 51.43%, so only a little bit above half the training set. 
+# The Test accuracy was 47.13%. 
 # 
 # The data went through the training again, but with unfreezing on the last few layers. 
-# * Epoch 1: loss = 1.2081, training accuracy = 56.43%
-# * Epoch 2: loss = 1.2081, training accuracy = 65.36%
+# * Epoch 1: loss = 1.2317, training accuracy = 53.74%
+# * Epoch 2: loss = 1.0012, training accuracy = 65.31%
 # 
-# The test accuracy this time was 55.24%, which is only 4% higher than the initial training. 
+# The test accuracy this time was 52.23%, which is only 5% higher than the initial training. 
 #
+# The animal class with the highest precision and reclass is Bird (83% and 76% respectively).
+# A reason for this could be that "bird" includes many species of birds, while classes like 
+# "dog" or "cat" are only 1 species. The animal with the lowest precision is sheep (9%). 
 # 
 # # Discussion and Interpretation
 # The hardest roadblock we faced was the 429 error where 
