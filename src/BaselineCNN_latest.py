@@ -1,5 +1,7 @@
-# cnn_animals10_from_filtered.py
 #%%
+# ------------------------------------------------------------
+# Imports and device
+# ------------------------------------------------------------
 import os
 import pandas as pd
 import numpy as np
@@ -7,7 +9,9 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import requests
 from io import BytesIO
+
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report
 
 import torch
 import torch.nn as nn
@@ -15,9 +19,6 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
-# ------------------------------------------------------------
-# 0. Device
-# ------------------------------------------------------------
 device = (
     "mps" if torch.backends.mps.is_available() else
     "cuda" if torch.cuda.is_available() else
@@ -30,15 +31,20 @@ print("Using device:", device)
 # ------------------------------------------------------------
 ## 1. Data preparation from filtered CSVs
 # ------------------------------------------------------------
-#In this section we load the pre-filtered Open Images CSV files that contain only our target animal classes.
-#We define a manual dictionary `label_to_animal` that maps these Open Images label IDs (e.g. `/m/0bt9lr`) to human-readable animal names such as `"Dog"` or `"Cat"`.
-#We first filter the annotation tables to keep only rows whose label IDs appear in this dictionary, and then add a `ClassName` column with the corresponding animal name. 
-#Finally, we merge the image lists with the filtered annotations on `ImageID` (for both train and test), so each row in `train_labels_merged` and `test_labels_merged` contains:
-# (1) the image identifier and its metadata, 
-# and (2) the associated label ID and animal class name. 
+# In this section we load the pre-filtered Open Images CSV files that contain
+# only our target animal classes. We define a manual dictionary `label_to_animal`
+# that maps these Open Images label IDs (e.g. `/m/0bt9lr`) to human-readable
+# animal names such as `"Dog"` or `"Cat"`. We first filter the annotation tables
+# to keep only rows whose label IDs appear in this dictionary, and then add a
+# `ClassName` column with the corresponding animal name.
+# Finally, we merge the image lists with the filtered annotations on `ImageID`
+# (for both train and test), so each row in `train_labels_merged` and
+# `test_labels_merged` contains:
+# (1) the image identifier and its metadata,
+# and (2) the associated label ID and animal class name.
 
-
-# Base directory you gave me
+#%%
+# Base directory (BigData folder)
 base_dir = "/Users/annasirtori/localDocs/GitHub/Data37000_AnnaVibhaSophie_Final/src/BigData"
 
 train_images_csv = os.path.join(base_dir, "train-images-with-labels-with-rotation_animalsProject.csv")
@@ -63,15 +69,21 @@ label_to_animal = {
     "/m/08hhz2": "Sheep"
 }
 
+# Keep only the labels we care about (our animal classes)
 classes = classes[classes["LabelName"].isin(label_to_animal.keys())].copy()
 classes["ClassName"] = classes["LabelName"].map(label_to_animal)
 
+# Merge train image list with annotations
 train_labels_merged = train_labels.merge(
     classes[["ImageID", "LabelName", "ClassName"]],
     on="ImageID",
     how="inner"
 )
 
+print("Train labels merged shape (full):", train_labels_merged.shape)
+print(train_labels_merged.head())
+
+# Do the same for the test split
 test_images = pd.read_csv(test_images_csv)
 test_ann    = pd.read_csv(test_ann_csv)
 test_ann    = test_ann[test_ann["LabelName"].isin(label_to_animal.keys())].copy()
@@ -83,74 +95,84 @@ test_labels_merged = test_images.merge(
     how="inner"
 )
 
-print("\nTest labels merged shape:", test_labels_merged.shape)
+print("\nTest labels merged shape (full):", test_labels_merged.shape)
 print(test_labels_merged.head())
-
-%% [markdown]
-# ------------------------------------------------------------
-# 1.b Split merged train table into train / validation
-# ------------------------------------------------------------
-#To monitor generalization during training without touching the held-out test set, I further split the pre-filtered training split into an internal training and validation set using `train_test_split` with stratification by class label (80% train, 20% validation). The model is trained only on the internal training subset, while the validation accuracy is computed at the end of each epoch and used to track learning progress and potential overfitting. The separate filtered test split is kept untouched until the end and used only once for final model evaluation.
-
-train_df, val_df = train_test_split(
-    train_labels_merged,
-    test_size=0.2,
-    stratify=train_labels_merged["ClassName"],  # keep class proportions per animal
-    random_state=42
-)
-
-print(f"Train split size: {len(train_df)} | Val split size: {len(val_df)}")
-
-
-# Validation split (val_labels_merged)
-val_images_csv = os.path.join(base_dir, "val_images.csv")
-val_ann_csv    = os.path.join(base_dir, "val_annotations.csv")
-
-val_images = pd.read_csv(val_images_csv)
-val_ann    = pd.read_csv(val_ann_csv)
-
-# keep only our animal label MIDs
-#val_ann = val_ann[val_ann["LabelName"].isin(label_to_animal.keys())].copy()
-#val_ann["ClassName"] = val_ann["LabelName"].map(label_to_animal)
-
-val_labels_merged = val_images.merge(
-    val_ann[["ImageID", "LabelName", "ClassName"]],
-    on="ImageID",
-    how="inner"
-)
-
-print("\nVal labels merged shape:", val_labels_merged.shape)
-print(val_labels_merged.head())
-
-
 
 #%% [markdown]
 # ------------------------------------------------------------
-## 2. Paths & label mapping (10 animal classes)
+## 1.b FAST_MODE subsampling (to keep training feasible)
 # ------------------------------------------------------------
-#As Neural networks cannot work directly with string labels, we convert our animal classes into integer indices. 
-#We first collect the set of distinct animal names that appear in `label_to_animal`, sort them, and assign each one a class index via the dictionary `class_to_idx` (e.g. `"Bear" -> 0`, `"Bird" -> 1`, etc.). 
-#The list `idx_to_name` stores the reverse mapping from index back to class name, which is useful for decoding predictions.
+# The filtered Open Images subset is still quite large, and images are loaded
+# from remote URLs. Training on all available images would be very slow on a
+# local machine. To keep the experiments computationally feasible, we enable
+# a FAST_MODE that randomly subsamples the train and test splits to a fixed
+# maximum number of rows. The same code can be run later with FAST_MODE=False
+# on more powerful hardware to use the full dataset.
 
+#%%
+FAST_MODE = True  # set to False for full dataset (will be much slower)
+
+if FAST_MODE:
+    MAX_TRAIN_SAMPLES = 10000   # e.g. 10k train
+    MAX_TEST_SAMPLES  = 2000    # e.g. 2k test
+
+    if len(train_labels_merged) > MAX_TRAIN_SAMPLES:
+        train_labels_merged = train_labels_merged.sample(
+            n=MAX_TRAIN_SAMPLES,
+            random_state=42
+        ).reset_index(drop=True)
+
+    if len(test_labels_merged) > MAX_TEST_SAMPLES:
+        test_labels_merged = test_labels_merged.sample(
+            n=MAX_TEST_SAMPLES,
+            random_state=42
+        ).reset_index(drop=True)
+
+    print(f"\n[FAST_MODE] Using {len(train_labels_merged)} train rows and {len(test_labels_merged)} test rows")
+else:
+    print(f"\n[FULL_MODE] Using full train set ({len(train_labels_merged)} rows) "
+          f"and full test set ({len(test_labels_merged)} rows)")
+
+#%% [markdown]
+# ------------------------------------------------------------
+## 2. Map class names to integer indices + train/val split
+# ------------------------------------------------------------
+# As Neural networks cannot work directly with string labels, we convert our
+# animal classes into integer indices. We first collect the set of distinct
+# animal names that appear in `ClassName`, sort them, and assign each one a
+# class index via the dictionary `class_to_idx` (e.g. `"Bear" -> 0`, `"Bird" -> 1`, etc.).
+# The list `idx_to_name` stores the reverse mapping from index back to class name.
+#
+# We then add a numeric `'label'` column to the train and test DataFrames using
+# this mapping. Finally, we split the merged training table into an internal
+# training set (80%) and validation set (20%) using `train_test_split` with
+# stratification on the numeric label, so class proportions are preserved in
+# both splits.
+
+#%%
 # Map class names to integer indices
 classes_names = sorted(train_labels_merged["ClassName"].unique())
 class_to_idx = {name: i for i, name in enumerate(classes_names)}
 idx_to_name  = classes_names
 num_classes  = len(classes_names)
 
-# Add a numeric 'label' column to each split
+# Add numeric 'label' column
 train_labels_merged["label"] = train_labels_merged["ClassName"].map(class_to_idx)
 test_labels_merged["label"]  = test_labels_merged["ClassName"].map(class_to_idx)
-val_labels_merged["label"]   = val_labels_merged["ClassName"].map(class_to_idx)
 
-print("Classes:", classes_names)
+print("\nClasses:", classes_names)
 print("Example train row:\n", train_labels_merged.head(2))
 
+# Split merged train table into train / validation
+train_df, val_df = train_test_split(
+    train_labels_merged,
+    test_size=0.2,
+    stratify=train_labels_merged["label"],  # keep class proportions per animal
+    random_state=42
+)
 
-from sklearn.model_selection import train_test_split
+print(f"\nTrain split size: {len(train_df)} | Val split size: {len(val_df)}")
 
-
-#%% [markdown]
 #%% [markdown]
 # ------------------------------------------------------------
 ## 3. Custom Dataset and DataLoader construction (URL-based)
@@ -168,7 +190,7 @@ from sklearn.model_selection import train_test_split
 # DataLoaders that handle batching and shuffling, producing mini-batches
 # ready to be fed into the CNN.
 
-
+#%%
 def load_image_from_url(url):
     """
     Download an image from the given URL and return a PIL.Image in RGB.
@@ -214,14 +236,18 @@ class OpenImagesAnimalsDataset(Dataset):
             img = transforms.ToTensor()(img)
 
         return img, label
-    
 
-#%% [markdown]
 #%% [markdown]
 # ------------------------------------------------------------
 ## 4. Transforms and DataLoaders (train / val / test)
 # ------------------------------------------------------------
+# All images are resized to 64x64 pixels, converted to tensors, and normalized
+# channel-wise to have approximate range in [-1, 1]. For training, we apply
+# random horizontal flips, small rotations, and color jitter to improve
+# robustness and reduce overfitting. For validation and test, we only resize
+# and normalize (no augmentation).
 
+#%%
 IMG_SIZE = 64  # every image resized to 64x64
 
 # Train images: resize + augmentation + normalize
@@ -243,28 +269,15 @@ transform_eval = transforms.Compose([
                          (0.5, 0.5, 0.5))
 ])
 
-# Datasets from URLs
-#train_dataset = OpenImagesAnimalsDataset(train_labels_merged, transform=transform_train)
-#val_dataset   = OpenImagesAnimalsDataset(val_labels_merged,   transform=transform_eval)
-#test_dataset  = OpenImagesAnimalsDataset(test_labels_merged,  transform=transform_eval)
+# Datasets from URLs (using subsampled and split DataFrames)
+train_dataset = OpenImagesAnimalsDataset(train_df,          transform=transform_train)
+val_dataset   = OpenImagesAnimalsDataset(val_df,            transform=transform_eval)
+test_dataset  = OpenImagesAnimalsDataset(test_labels_merged, transform=transform_eval)
 
-# Use train_df and val_df for training & validation
-train_dataset = OpenImagesAnimalsDataset(train_df, TRAIN_IMG_DIR, mid_to_idx, transform=transform_train)
-val_dataset   = OpenImagesAnimalsDataset(val_df,  TRAIN_IMG_DIR, mid_to_idx, transform=transform_test)
-
-# Keep test_labels_merged as a true held-out test set
-test_dataset  = OpenImagesAnimalsDataset(test_labels_merged, TEST_IMG_DIR, mid_to_idx, transform=transform_test)
-
-# DataLoaders
-trainloader = DataLoader(train_dataset, batch_size=64, shuffle=True,  num_workers=2, pin_memory=True)
-valloader   = DataLoader(val_dataset,   batch_size=128, shuffle=False, num_workers=2, pin_memory=True)
-testloader  = DataLoader(test_dataset,  batch_size=128, shuffle=False, num_workers=2, pin_memory=True)
-
-print(f"\nTrain samples: {len(train_dataset)} | Val samples: {len(val_dataset)} | Test samples: {len(test_dataset)}")
-# DataLoaders
-#trainloader = DataLoader(train_dataset, batch_size=64, shuffle=True,  num_workers=0)
-#valloader   = DataLoader(val_dataset,   batch_size=128, shuffle=False, num_workers=0)
-#testloader  = DataLoader(test_dataset,  batch_size=128, shuffle=False, num_workers=0)
+# DataLoaders (num_workers=0 avoids multiprocessing issues on macOS / notebooks)
+trainloader = DataLoader(train_dataset, batch_size=64, shuffle=True,  num_workers=0)
+valloader   = DataLoader(val_dataset,   batch_size=128, shuffle=False, num_workers=0)
+testloader  = DataLoader(test_dataset,  batch_size=128, shuffle=False, num_workers=0)
 
 print(f"\nTrain samples: {len(train_dataset)} | "
       f"Val samples: {len(val_dataset)} | "
@@ -274,14 +287,17 @@ print(f"\nTrain samples: {len(train_dataset)} | "
 imgs, labels = next(iter(trainloader))
 print("Batch images shape:", imgs.shape)   # [B, 3, 64, 64]
 print("Batch labels shape:", labels.shape) # [B]
-#%%
+
 #%% [markdown]
 # ------------------------------------------------------------
 ## 4b. Sample visualization
 # ------------------------------------------------------------
+# We visually verify that images and labels are aligned correctly by taking a
+# mini-batch of normalized images and their integer labels, roughly unnormalizing
+# the images back to [0, 1], and displaying a few examples in a row with their
+# decoded class names as titles.
 
-
-#Utility function to vsualize some examples from a batch 
+#%%
 def show_sample_batch(images, labels, idx_to_name, num_samples=8):
     """
     Show a few images from a batch with their decoded class names.
@@ -292,14 +308,13 @@ def show_sample_batch(images, labels, idx_to_name, num_samples=8):
     images = images * 0.5 + 0.5  # back to [0,1] approx
 
     num_samples = min(num_samples, images.size(0))
-    fig, axes = plt.subplots(1, num_samples, figsize=(2*num_samples, 2))
+    fig, axes = plt.subplots(1, num_samples, figsize=(2 * num_samples, 2))
     if num_samples == 1:
         axes = [axes]
 
-    #we will show num_samples images from the batch
     for i in range(num_samples):
         img_np = images[i].cpu().numpy()          # [3,H,W]
-        img_np = np.transpose(img_np, (1, 2, 0))  # [H,W,3] for imshow
+        img_np = np.transpose(img_np, (1, 2, 0))  # [H,W,3]
         axes[i].imshow(img_np)
         class_idx = labels[i].item()
         axes[i].set_title(idx_to_name[class_idx])
@@ -310,27 +325,26 @@ def show_sample_batch(images, labels, idx_to_name, num_samples=8):
     plt.show()
 
 show_sample_batch(imgs, labels, idx_to_name, num_samples=8)
-#%%[markdown]
+
+#%% [markdown]
 # ------------------------------------------------------------
-## 5. CNN model 
+## 5. CNN model
 # ------------------------------------------------------------
-# We bulild a simple 2 convolutional blocks CNN architeture for classifying the 10 animal classes.
-# Each block applies two `3×3` convolutions with ReLU activations, followed by a `2×2` max pooling layer that halves the spatial resolution. 
-# Starting from a `3×64×64` RGB image, the first block produces `32×32×32` feature maps, and the second block produces `64×16×16` feature maps. 
-# A `Dropout(0.25)` layer is added after the convolutional blocks to reduce overfitting by randomly zeroing a fraction of activations during training. 
+# We build a simple 2-block convolutional neural network for classifying the
+# animal images. Each block applies two 3x3 convolutions with ReLU activations,
+# followed by a 2x2 max pooling layer that halves the spatial resolution.
+# Starting from a 3x64x64 RGB image, the first block produces 32x32x32 feature
+# maps, and the second block produces 64x16x16 feature maps. A Dropout(0.25)
+# layer is added after the convolutional blocks to reduce overfitting.
+#
+# The fully connected classifier head flattens the 64x16x16 feature maps into
+# a 16,384-dimensional vector per image, reduces this to a 256-dimensional
+# embedding with a linear layer and ReLU, applies Dropout(0.5), and finally
+# maps to `num_classes` output logits. During training, these logits are fed
+# into CrossEntropyLoss, which compares the resulting probabilities to the
+# true integer label index.
 
-#The fully connected classifier head (`self.fc_layers`) takes the final `64×16×16` feature maps and flattens them into a 16,384-dimensional feature vector per image. 
-#A linear layer then reduces this to a 256-dimensional embedding, which is passed through a ReLU non-linearity and `Dropout(0.5)` for robust non-linear decision boundaries. 
-#The final linear layer maps this 256-D representation to `num_classes` output logits, one per animal class. 
-# During training, these logits are fed into `CrossEntropyLoss`, which applies a softmax and compares the resulting probability distribution to the true integer label index.
-
-#Simple CNN with 2 conv blocks + FC layers: 
-#each conv block: Conv2d -> ReLU -> Conv2d -> ReLU -> MaxPool2d
-#then flatten + FC -> ReLU -> FC
-
-#Block 1: 3→32 conv, ReLU, 32→32 conv, ReLU, then pool (64×64 → 32×32).
-#Block 2: 32→64 conv, ReLU, 64→64 conv, ReLU, then pool (32×32 → 16×16).
-
+#%%
 class AnimalsCNN(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
@@ -360,32 +374,36 @@ class AnimalsCNN(nn.Module):
             nn.Linear(256, num_classes)
         )
 
-    #standard forward pass: conv layers -> fc layers
     def forward(self, x):
         x = self.conv_layers(x)
         x = self.fc_layers(x)
         return x
 
-num_classes = len(idx_to_name) #number of distinct animal classes
+num_classes = len(idx_to_name)
 model = AnimalsCNN(num_classes=num_classes).to(device)
 print(model)
 
-#count total and trainable parameters
 total_params = sum(p.numel() for p in model.parameters())
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"\nTotal parameters: {total_params:,} | Trainable: {trainable_params:,}")
 
 #%% [markdown]
 # ------------------------------------------------------------
-## 6. Training + evaluation
+## 6. Training + evaluation (overall accuracy)
 # ------------------------------------------------------------
-#We use `CrossEntropyLoss` as our classification loss and optimize the network parameters with the Adam optimizer. 
-#For each batch, we perform a forward pass to obtain the logits, compute the cross-entropy loss against the ground-truth label indices, backpropagate the gradients, and update the weights. 
-#We accumulate the batch losses and track how many predictions match the true labels in order to compute the training accuracy.
+# We use CrossEntropyLoss as our classification loss and optimize the network
+# parameters with the Adam optimizer. For each batch, we perform a forward pass
+# to obtain the logits, compute the cross-entropy loss against the ground-truth
+# label indices, backpropagate the gradients, and update the weights. We
+# accumulate the batch losses and track how many predictions match the true
+# labels to compute the training accuracy.
+#
+# After each epoch, we evaluate the model on the validation set, computing
+# the overall percentage of correctly classified validation images. The
+# separate filtered test split is kept untouched until the end and used
+# once to report the final test accuracy.
 
-# After each epoch, we evaluate the model on the test set, and we computes predictions with `argmax` over the output logits, and returns the overall percentage of correctly classified test images. 
-
-
+#%%
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
@@ -402,7 +420,7 @@ def compute_accuracy(loader):
     return 100.0 * correct / total
 
 epochs = 5
-train_accs, val_accs, test_accs, losses = [], [], [], []
+train_accs, val_accs, losses = [], [], []
 
 for epoch in range(epochs):
     model.train()
@@ -426,46 +444,33 @@ for epoch in range(epochs):
     avg_loss = running_loss / len(trainloader)
     train_acc = 100.0 * correct_train / total_train
     val_acc   = compute_accuracy(valloader)
-    #test_acc  = compute_accuracy(testloader)
+
     losses.append(avg_loss)
     train_accs.append(train_acc)
-    test_accs.append(val_acc)  # you can rename test_accs -> val_accs if you prefer
+    val_accs.append(val_acc)
 
     print(f"Epoch {epoch+1}/{epochs} | "
-      f"Loss={avg_loss:.4f} | "
-      f"Train Acc={train_acc:.2f}% | "
-      f"Val Acc={val_acc:.2f}%")
-    
+          f"Loss={avg_loss:.4f} | "
+          f"Train Acc={train_acc:.2f}% | "
+          f"Val Acc={val_acc:.2f}%")
 
-    #losses.append(avg_loss)
-    #train_accs.append(train_acc)
-    #val_accs.append(val_acc)
-    #test_accs.append(test_acc)
-
-    #print(f"Epoch {epoch+1}/{epochs} | "
-          #f"Loss={avg_loss:.4f} | "
-          #f"Train Acc={train_acc:.2f}% | "
-          #f"Val Acc={val_acc:.2f}% | "
-          #f"Test Acc={test_acc:.2f}%")
-
+# Final test accuracy on the held-out test set
 final_test_acc = compute_accuracy(testloader)
 print(f"\nFinal test accuracy on held-out test set: {final_test_acc:.2f}%")
-    
-    
-
-
-    
 
 #%% [markdown]
 # ------------------------------------------------------------
-## 7. Learning curves
+## 7. Learning curves (Train/Validation)
 # ------------------------------------------------------------
-#To analyze the training dynamics, we plot the evolution of the average training loss and the classification accuracy over epochs. 
-# The first subplot shows the training loss decreasing as the optimizer minimizes the cross-entropy objective, while the second subplot compares training accuracy to test accuracy for each epoch. 
-# ---> CHANGE!!! A healthy training run should exhibit decreasing loss and increasing accuracies; a large gap between training and test performance would indicate overfitting. 
-# Here, we can observe how well the CNN learns to classify the 10 animal classes from the Open Images dataset.
+# To analyze the training dynamics, we plot the evolution of the average
+# training loss and the classification accuracy over epochs. The first subplot
+# shows the training loss decreasing as the optimizer minimizes the cross-entropy
+# objective, while the second subplot compares training accuracy to validation
+# accuracy for each epoch. A healthy training run should exhibit decreasing loss
+# and increasing accuracies; a large gap between training and validation
+# performance would indicate overfitting.
 
-
+#%%
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
 axes[0].plot(range(1, epochs+1), losses, marker='o', label='Train Loss')
@@ -477,14 +482,11 @@ axes[0].legend()
 
 axes[1].plot(range(1, epochs+1), train_accs, marker='o', label='Train Acc')
 axes[1].plot(range(1, epochs+1), val_accs,   marker='^', label='Val Acc')
-#axes[1].plot(range(1, epochs+1), test_accs,  marker='s', label='Test Acc')
-axes[1].set_title("Train vs Test Accuracy")
+axes[1].set_title("Train vs Validation Accuracy")
 axes[1].set_xlabel("Epoch")
 axes[1].set_ylabel("Accuracy (%)")
 axes[1].grid(True, linestyle='--', alpha=0.5)
 axes[1].legend()
-
-
 
 plt.suptitle("Animals CNN Learning Curves", fontsize=14)
 plt.tight_layout()
@@ -495,17 +497,88 @@ plt.savefig(os.path.join(results_dir, "animals_cnn_curves.png"), dpi=300, bbox_i
 plt.show()
 
 #%% [markdown]
-## 7b. Sample batch visualization 
-#we visually verify that images and labels are aligned correctly, by taking a mini-batch of normalized images and their integer labels, roughly unnormalizing the images back to `[0, 1]`, and we display a few examples in a row with their decoded class names as titles. 
-
-
+# ------------------------------------------------------------
+## 8. Confusion matrix and per-class metrics
+# ------------------------------------------------------------
+# For a more detailed evaluation of the model, we compute:
+#  - a confusion matrix on the held-out test set, showing how often each
+#    true class is predicted as each possible class;
+#  - per-class precision, recall, and F1-score using `classification_report`.
+# This goes beyond overall accuracy and highlights which animal classes
+# are easier or harder for the model to recognize.
 
 #%%
+def get_all_predictions(loader):
+    model.eval()
+    all_labels, all_preds = [], []
+    with torch.no_grad():
+        for imgs, labels in loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            outputs = model(imgs)
+            _, preds = torch.max(outputs, 1)
+            all_labels.append(labels.cpu().numpy())
+            all_preds.append(preds.cpu().numpy())
+    all_labels = np.concatenate(all_labels)
+    all_preds = np.concatenate(all_preds)
+    return all_labels, all_preds
+
+y_true, y_pred = get_all_predictions(testloader)
+
+# Confusion matrix
+cm = confusion_matrix(y_true, y_pred)
+print("\nConfusion matrix (raw counts):")
+print(cm)
+
+# Plot confusion matrix
+fig, ax = plt.subplots(figsize=(8, 8))
+im = ax.imshow(cm, interpolation='nearest')
+ax.figure.colorbar(im, ax=ax)
+ax.set_xticks(np.arange(num_classes))
+ax.set_yticks(np.arange(num_classes))
+ax.set_xticklabels(idx_to_name, rotation=45, ha="right")
+ax.set_yticklabels(idx_to_name)
+ax.set_xlabel("Predicted label")
+ax.set_ylabel("True label")
+ax.set_title("Confusion Matrix (Test Set)")
+plt.tight_layout()
+plt.show()
+
+# Per-class metrics
+print("\nPer-class precision/recall/F1 on test set:")
+print(classification_report(y_true, y_pred, target_names=idx_to_name))
+
+#%% [markdown]
 # ------------------------------------------------------------
-## 8. Save model
+## 9. Save model
 # ------------------------------------------------------------
+# We save only the model weights (`state_dict`) to a .pth file so that the
+# trained CNN can be reloaded later for further evaluation or inference.
+
+#%%
 models_dir = f".{os.sep}data{os.sep}untrack{os.sep}models{os.sep}"
 os.makedirs(models_dir, exist_ok=True)
 model_path = os.path.join(models_dir, "cnn_animals10_from_filtered.pth")
 torch.save(model.state_dict(), model_path)
 print(f"✅ Model saved to {model_path}")
+
+#%% [markdown]
+# ------------------------------------------------------------
+## 10. Note on FAST_MODE and computational constraints
+# ------------------------------------------------------------
+# Due to the size of the filtered Open Images subset (hundreds of thousands of
+# images) and the fact that images are downloaded from remote URLs at training
+# time, running the model on the full dataset would be prohibitively slow on my
+# local machine. To keep the experiments computationally feasible while still
+# demonstrating the complete pipeline (data loading, preprocessing, model
+# definition, training, and evaluation), I enabled a FAST_MODE configuration
+# that randomly subsamples the training and test splits to a fixed maximum
+# number of examples (e.g. 10,000 train and 2,000 test).
+#
+# The model architecture, loss function, and evaluation procedure (train/val
+# split, learning curves, accuracy, confusion matrix, per-class metrics) are
+# exactly the same as they would be on the full dataset; only the number of
+# training examples is reduced. This means the reported metrics should be
+# interpreted as proof-of-concept results rather than fully optimized
+# performance. The same code can be run with FAST_MODE=False on more powerful
+# hardware to obtain higher accuracies and more stable per-class statistics,
+# but the qualitative behavior and analysis remain valid.
