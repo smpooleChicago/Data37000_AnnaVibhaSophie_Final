@@ -332,7 +332,157 @@ plt.suptitle("First Conv Layer Feature Maps")
 plt.show()
 
 # %%
-# Accuracy; Confusion matrix; Per-class metrics; Train/validation curves
-#https://docs.pytorch.org/tutorials/beginner/transfer_learning_tutorial.html
-#https://docs.pytorch.org/vision/main/models/generated/torchvision.models.resnet18.html
+# CNN
 
+transform = transforms.Compose([
+    transforms.Resize((128, 128)),   # ⭐ HERE
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
+])
+
+train = OpenImagesDataset(train_df, transform)
+test   = OpenImagesDataset(test_df, transform)
+val = OpenImagesDataset(val_df, transform)
+
+train_loader = DataLoader(train, batch_size=32, shuffle=True)
+test_loader  = DataLoader(test, batch_size=32, shuffle=False)
+val_loader = DataLoader(val, batch_size=32, shuffle=False)
+
+# %%
+class AnimalsCNN(nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.conv_layers = nn.Sequential(
+            # Block 1: 3x64x64 -> 32x64x64 -> 32x64x64 -> MaxPool -> 32x32x32
+            nn.Conv2d(3, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+
+            # Block 2: 32x32x32 -> 64x32x32 -> 64x32x32 -> MaxPool -> 64x16x16
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+
+            nn.AdaptiveAvgPool2d((16, 16)),
+
+            nn.Dropout(0.25)
+        )
+
+        self.fc_layers = nn.Sequential(
+            nn.Flatten(),                     # [B, 64*16*16]
+            nn.Linear(64 * 16 * 16, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, num_classes)
+        )
+
+    #standard forward pass: conv layers -> fc layers
+    def forward(self, x):
+        x = self.conv_layers(x)
+        x = self.fc_layers(x)
+        return x
+    
+
+num_classes = len(set(train_labels_merged)) #number of distinct animal classes
+modelCNN = AnimalsCNN(num_classes=num_classes).to(device)
+print(modelCNN)
+
+#count total and trainable parameters
+total_params = sum(p.numel() for p in modelCNN.parameters())
+trainable_params = sum(p.numel() for p in modelCNN.parameters() if p.requires_grad)
+print(f"\nTotal parameters: {total_params:,} | Trainable: {trainable_params:,}")
+
+# %%
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(modelCNN.parameters(), lr=1e-3)
+
+def compute_accuracy(loader):
+    modelCNN.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for imgs, labels in loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            outputs = modelCNN(imgs)
+            _, preds = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (preds == labels).sum().item()
+    return 100.0 * correct / total
+
+epochs = 5
+train_accs, val_accs, test_accs, losses = [], [], [], []
+
+for epoch in range(epochs):
+    modelCNN.train()
+    running_loss = 0.0
+    correct_train, total_train = 0, 0
+
+    for imgs, labels in train_loader:
+        imgs, labels = imgs.to(device), labels.to(device)
+
+        optimizer.zero_grad()
+        outputs = modelCNN(imgs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+        _, preds = torch.max(outputs, 1)
+        total_train += labels.size(0)
+        correct_train += (preds == labels).sum().item()
+
+    avg_loss = running_loss / len(train_loader)
+    train_acc = 100.0 * correct_train / total_train
+    val_acc   = compute_accuracy(val_loader)
+    #test_acc  = compute_accuracy(testloader)
+    losses.append(avg_loss)
+    train_accs.append(train_acc)
+    test_accs.append(val_acc)  # you can rename test_accs -> val_accs if you prefer
+
+    print(f"Epoch {epoch+1}/{epochs} | "
+      f"Loss={avg_loss:.4f} | "
+      f"Train Acc={train_acc:.2f}% | "
+      f"Val Acc={val_acc:.2f}%")
+    
+# * Epoch 1/5, loss = 2.1854, train acc = 13.33%, val acc = 14.56%
+# * Epoch 2/5, loss=2.0052, train Acc=16.05%, val acc=22.15%
+# * Epoch 3/5, loss=1.9327, train Acc=21.77%, val acc=24.68%
+# * Epoch 4/5, loss=1.8845, train acc=25.71%, val acc = 22.15%
+# * Epoch 5/5, loss=1.8524, train acc=26.94%, val acc = 24.05%
+# %%
+
+test_model(modelCNN, test_loader, device)
+# 27.39%
+
+# %%
+modelCNN.eval()
+
+y_true = []
+y_pred = []
+
+with torch.no_grad():  # no gradients needed during evaluation
+    for images, labels in test_loader:
+        images = images.to(device)  # move to GPU if available
+        labels = labels.to(device)
+
+        outputs = modelCNN(images)           # forward pass
+        _, preds = torch.max(outputs, 1)  # get predicted class index
+
+        y_true.extend(preds.cpu().numpy())
+        y_pred.extend(labels.cpu().numpy())
+
+cm = confusion_matrix(y_true, y_pred)
+print(cm)
+#%% [markdown]
+
+ClassNames = ["Dog", "Bird", "Horse", "Cat", "Bear", "Sheep", "Cattle"]
+from sklearn.metrics import classification_report
+classReport = classification_report(y_true, y_pred, target_names=ClassNames)
+print(classReport)
+# %%
